@@ -73,9 +73,9 @@ def get_user(username: str):
     return UserOut(id=row[0], username=row[1], email=row[2])
 
 
-# ── GET /api/user/{id} ──────────────────────────────────────────────────
+# ── GET /api/user/id/{id} ──────────────────────────────────────────────────
 
-@app.get("/user/{id}", response_model=UserOut)
+@app.get("/user/id/{id}", response_model=UserOut)
 def get_user(id: int):
     with get_connection() as conn:
         cursor = conn.cursor()
