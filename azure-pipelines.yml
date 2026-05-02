@@ -24,9 +24,6 @@ variables:
   PYTHON_VERSION: "3.12"
   PIP_CACHE_DIR: $(Pipeline.Workspace)/.pip
 
-# ── Shared step template: create & activate a venv ───────────────────────────
-# Re-used in both stages so each stage gets its own isolated environment.
-
 stages:
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
@@ -76,17 +73,18 @@ stages:
               --format="%(path)s:%(row)d:%(col)d: %(code)s %(text)s" \
               | tee flake8-report.txt
           displayName: "Run flake8"
-          # The pipeline step itself will still fail on non-zero exit so any
-          # real lint errors block the pipeline; tee just preserves the output.
 
-        # 5. Publish the lint report as a build artifact
-        - task: PublishBuildArtifacts@1
+        # 5. Publish the lint report as a pipeline artifact
+        #    PublishPipelineArtifact@1 is used instead of PublishBuildArtifacts@1
+        #    to avoid the "Value cannot be null / securityNamespace" error that
+        #    the older task can throw on some Azure DevOps organisations.
+        - task: PublishPipelineArtifact@1
           displayName: "Publish flake8 report"
-          condition: always()   # upload even when flake8 found issues
+          condition: always()
           inputs:
-            PathtoPublish: "flake8-report.txt"
-            ArtifactName: "flake8-report"
-            publishLocation: "Container"
+            targetPath: "flake8-report.txt"
+            artifact: "flake8-report"
+            publishLocation: "pipeline"
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
@@ -94,7 +92,7 @@ stages:
 # ╚══════════════════════════════════════════════════════════════════════════╝
 - stage: Tests
   displayName: "Stage 2 – Tests (pytest)"
-  dependsOn: StaticAnalysis   # only run if linting passed
+  dependsOn: StaticAnalysis
   condition: succeeded()
 
   jobs:
@@ -132,6 +130,7 @@ stages:
         #    --cov       – coverage report in XML (Cobertura) + terminal summary
         #    -v          – verbose output so failures are easy to read in logs
         - script: |
+            mkdir -p test-results
             pytest test_user_service.py \
               -v \
               --junitxml=test-results/results.xml \
@@ -143,7 +142,7 @@ stages:
         # 5. Publish JUnit test results (shows pass/fail in the Azure Pipelines UI)
         - task: PublishTestResults@2
           displayName: "Publish test results"
-          condition: always()   # report failures even when tests fail
+          condition: always()
           inputs:
             testResultsFormat: "JUnit"
             testResultsFiles: "test-results/results.xml"
@@ -157,12 +156,13 @@ stages:
           inputs:
             summaryFileLocation: "test-results/coverage.xml"
 
-        # 7. Upload the entire test-results folder as a downloadable artifact
-        #    Useful for offline inspection or passing results to downstream jobs
-        - task: PublishBuildArtifacts@1
+        # 7. Upload the entire test-results folder as a pipeline artifact
+        #    Same fix as Stage 1 – use PublishPipelineArtifact@1 instead of
+        #    PublishBuildArtifacts@1 to avoid the securityNamespace null error.
+        - task: PublishPipelineArtifact@1
           displayName: "Publish test artifacts"
           condition: always()
           inputs:
-            PathtoPublish: "test-results"
-            ArtifactName: "pytest-results"
-            publishLocation: "Container"
+            targetPath: "test-results"
+            artifact: "pytest-results"
+            publishLocation: "pipeline"
