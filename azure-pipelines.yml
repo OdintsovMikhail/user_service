@@ -1,19 +1,168 @@
-# Starter pipeline
-# Start with a minimal pipeline that you can customize to build and deploy your code.
-# Add steps that build, run tests, deploy, and more:
-# https://aka.ms/yaml
+# ──────────────────────────────────────────────────────────────────────────────
+# Azure Pipelines – user_service
+#
+# Stage 1 – Static Analysis  : flake8 syntax / style check
+# Stage 2 – Tests            : pytest, results published as JUnit + artifacts
+# ──────────────────────────────────────────────────────────────────────────────
 
 trigger:
-- main
+  branches:
+    include:
+      - main
+      - develop
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
 
 pool:
   vmImage: ubuntu-latest
 
-steps:
-- script: echo Hello, world!
-  displayName: 'Run a one-line script'
+variables:
+  PYTHON_VERSION: "3.12"
+  PIP_CACHE_DIR: $(Pipeline.Workspace)/.pip
 
-- script: |
-    echo Add other tasks to build, test, and deploy your project.
-    echo See https://aka.ms/yaml
-  displayName: 'Run a multi-line script'
+# ── Shared step template: create & activate a venv ───────────────────────────
+# Re-used in both stages so each stage gets its own isolated environment.
+
+stages:
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  STAGE 1 – Static Analysis (flake8)                                     ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+- stage: StaticAnalysis
+  displayName: "Stage 1 – Static Analysis (flake8)"
+  jobs:
+    - job: Flake8
+      displayName: "flake8 – syntax & style check"
+
+      steps:
+
+        # 1. Pin Python version
+        - task: UsePythonVersion@0
+          displayName: "Use Python $(PYTHON_VERSION)"
+          inputs:
+            versionSpec: "$(PYTHON_VERSION)"
+            addToPath: true
+
+        # 2. Cache pip downloads between runs
+        - task: Cache@2
+          displayName: "Cache pip packages"
+          inputs:
+            key: 'pip | "$(Agent.OS)" | requirements.txt'
+            restoreKeys: |
+              pip | "$(Agent.OS)"
+            path: $(PIP_CACHE_DIR)
+
+        # 3. Install only flake8 (keep this stage lean and fast)
+        - script: |
+            python -m pip install --upgrade pip
+            pip install flake8
+          displayName: "Install flake8"
+
+        # 4. Run flake8
+        #    --max-line-length 120  – matches most modern Python style guides
+        #    --statistics           – summary counts per error code
+        #    --count                – total error count at the end
+        #    Output is written to flake8-report.txt so it can be uploaded
+        - script: |
+            flake8 . \
+              --exclude=.venv,__pycache__,.git \
+              --max-line-length=120 \
+              --statistics \
+              --count \
+              --format="%(path)s:%(row)d:%(col)d: %(code)s %(text)s" \
+              | tee flake8-report.txt
+          displayName: "Run flake8"
+          # The pipeline step itself will still fail on non-zero exit so any
+          # real lint errors block the pipeline; tee just preserves the output.
+
+        # 5. Publish the lint report as a build artifact
+        - task: PublishBuildArtifacts@1
+          displayName: "Publish flake8 report"
+          condition: always()   # upload even when flake8 found issues
+          inputs:
+            PathtoPublish: "flake8-report.txt"
+            ArtifactName: "flake8-report"
+            publishLocation: "Container"
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  STAGE 2 – Tests (pytest)                                               ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+- stage: Tests
+  displayName: "Stage 2 – Tests (pytest)"
+  dependsOn: StaticAnalysis   # only run if linting passed
+  condition: succeeded()
+
+  jobs:
+    - job: Pytest
+      displayName: "pytest – unit tests"
+
+      steps:
+
+        # 1. Pin Python version
+        - task: UsePythonVersion@0
+          displayName: "Use Python $(PYTHON_VERSION)"
+          inputs:
+            versionSpec: "$(PYTHON_VERSION)"
+            addToPath: true
+
+        # 2. Cache pip downloads
+        - task: Cache@2
+          displayName: "Cache pip packages"
+          inputs:
+            key: 'pip | "$(Agent.OS)" | requirements.txt'
+            restoreKeys: |
+              pip | "$(Agent.OS)"
+            path: $(PIP_CACHE_DIR)
+
+        # 3. Install runtime + test dependencies
+        #    pydantic[email] is required because schemas.py uses EmailStr
+        - script: |
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            pip install pytest pytest-cov "pydantic[email]"
+          displayName: "Install dependencies"
+
+        # 4. Run pytest
+        #    --junitxml  – machine-readable results (picked up by PublishTestResults)
+        #    --cov       – coverage report in XML (Cobertura) + terminal summary
+        #    -v          – verbose output so failures are easy to read in logs
+        - script: |
+            pytest test_user_service.py \
+              -v \
+              --junitxml=test-results/results.xml \
+              --cov=. \
+              --cov-report=xml:test-results/coverage.xml \
+              --cov-report=term-missing
+          displayName: "Run pytest"
+
+        # 5. Publish JUnit test results (shows pass/fail in the Azure Pipelines UI)
+        - task: PublishTestResults@2
+          displayName: "Publish test results"
+          condition: always()   # report failures even when tests fail
+          inputs:
+            testResultsFormat: "JUnit"
+            testResultsFiles: "test-results/results.xml"
+            failTaskOnFailedTests: true
+            testRunTitle: "pytest – user_service"
+
+        # 6. Publish code coverage (Cobertura XML → Coverage tab in the UI)
+        - task: PublishCodeCoverageResults@2
+          displayName: "Publish code coverage"
+          condition: always()
+          inputs:
+            summaryFileLocation: "test-results/coverage.xml"
+
+        # 7. Upload the entire test-results folder as a downloadable artifact
+        #    Useful for offline inspection or passing results to downstream jobs
+        - task: PublishBuildArtifacts@1
+          displayName: "Publish test artifacts"
+          condition: always()
+          inputs:
+            PathtoPublish: "test-results"
+            ArtifactName: "pytest-results"
+            publishLocation: "Container"
