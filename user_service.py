@@ -1,12 +1,16 @@
 from fastapi import FastAPI, HTTPException
 from utility import get_connection
 from schemas import UserRegister, UserLogin, UserOut
+import logging
 
 app = FastAPI(
     title="BookService API",
     description="",
     version="1.0.0",
 )
+
+logger = logging.getLogger("comment_service")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # ── POST /api/user/register ───────────────────────────────────────────────────
 
@@ -21,7 +25,9 @@ def register(payload: UserRegister):
             payload.username, payload.email
         )
         if cursor.fetchone():
-            raise HTTPException(status_code=409, detail="Username or email already exists")
+            exc = HTTPException(status_code=409, detail="Username or email already exists")
+            logger.error("Failed: %s", exc)
+            raise exc
 
         cursor.execute(
             """
@@ -34,6 +40,7 @@ def register(payload: UserRegister):
         row = cursor.fetchone()
         conn.commit()
 
+    logger.info("User regusterd id %s", row[0])
     return UserOut(id=row[0], username=row[1], email=row[2])
 
 
@@ -50,8 +57,11 @@ def login(payload: UserLogin):
         row = cursor.fetchone()
 
     if not row:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
+        exc = HTTPException(status_code=401, detail="Invalid credentials")
+        logger.error("Failed: %s", exc)
+        raise exc
+    
+    logger.info("User authorised id %s", row[0])
     return {"message": "Login successful", "user": UserOut(id=row[0], username=row[1], email=row[2])}
 
 
@@ -68,8 +78,11 @@ def get_user(username: str):
         row = cursor.fetchone()
 
     if not row:
-        raise HTTPException(status_code=404, detail="User not found")
-
+        exc = HTTPException(status_code=404, detail="User not found")
+        logger.error("Failed: %s", exc)
+        raise exc
+    
+    logger.info("User with username %s found id=%s", username, row[0])
     return UserOut(id=row[0], username=row[1], email=row[2])
 
 
@@ -86,6 +99,9 @@ def get_user(id: int):
         row = cursor.fetchone()
 
     if not row:
-        raise HTTPException(status_code=404, detail="User not found")
-
+        exc = HTTPException(status_code=404, detail="User not found")
+        logger.error("Failed: %s", exc)
+        raise exc
+    
+    logger.info("User with id %s found", id)
     return UserOut(id=row[0], username=row[1], email=row[2])
