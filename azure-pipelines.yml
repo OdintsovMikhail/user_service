@@ -134,7 +134,7 @@ stages:
         - script: |
             python -m pip install --upgrade pip
             pip install -r requirements.txt
-            pip install pytest pytest-cov "pydantic[email]"
+            pip install pytest pytest-cov "pydantic[email]" httpx
           displayName: "Install dependencies"
 
         # 4. Run pytest
