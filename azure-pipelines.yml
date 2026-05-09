@@ -195,7 +195,6 @@ stages:
                   azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
                   appType: "webAppLinux"
                   appName: "$(WEBAPP_NAME)"
-                  package: "$(Pipeline.Workspace)/app-zip/app.zip"
+                  package: '$(Pipeline.Workspace)/drop/app.zip'
                   runtimeStack: "PYTHON|3.12"
-                  # startUpCommand is optional – uncomment and set for custom entrypoints, e.g.:
-                  # startUpCommand: "gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app"
+                 
