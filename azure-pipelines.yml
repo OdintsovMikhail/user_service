@@ -233,7 +233,7 @@ stages:
         #      Flask    → gunicorn -w 4 main:app
         #      Django   → gunicorn -w 4 user_service.wsgi
         - script: |
-            echo "gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app" > startup.txt
+            echo "uvicorn test_user_service:app --host 0.0.0.0 --port 8000" > startup.txt
           displayName: "Write startup command"
 
         # 5. Zip the workspace (source + pre-installed packages).
@@ -321,12 +321,7 @@ stages:
                   appName: "$(AZURE_WEBAPP_NAME)"
                   resourceGroupName: "$(AZURE_RESOURCE_GROUP)"
                   package: "$(Pipeline.Workspace)/app-package/app.zip"
-                  # The startup command below tells Kudu which WSGI/ASGI server
-                  # to use. Adjust to match your framework:
-                  #   FastAPI  → gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app
-                  #   Flask    → gunicorn -w 4 main:app
-                  #   Django   → gunicorn -w 4 user_service.wsgi
-                  startUpCommand: "gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app"
+                  startUpCommand: "uvicorn test_user_service:app --host 0.0.0.0 --port 8000"
                   deploymentMethod: "zipDeploy"   # fastest; avoids remote Oryx build
 
               # 3. (Optional) Smoke-test the live endpoint after deployment.
