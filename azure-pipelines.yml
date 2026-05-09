@@ -296,8 +296,7 @@ stages:
       displayName: "Deploy to Azure App Service"
       # Deployment jobs support approval gates and deployment history in the UI.
       # Add pre/post approval checks under Environments in Azure Pipelines.
-      environment: "production"   # ← create this environment in Azure Pipelines
-                                  #   (Pipelines → Environments) to enable gates
+      environment: "dev"
       strategy:
         runOnce:
           deploy:
