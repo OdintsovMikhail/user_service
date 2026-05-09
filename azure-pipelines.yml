@@ -233,7 +233,7 @@ stages:
         #      Flask    → gunicorn -w 4 main:app
         #      Django   → gunicorn -w 4 user_service.wsgi
         - script: |
-            echo "uvicorn test_user_service:app --host 0.0.0.0 --port 8000" > startup.txt
+            echo "uvicorn user_service:app --host 0.0.0.0 --port 8000" > startup.txt
           displayName: "Write startup command"
 
         # 5. Zip the workspace (source + pre-installed packages).
@@ -321,7 +321,7 @@ stages:
                   appName: "$(AZURE_WEBAPP_NAME)"
                   resourceGroupName: "$(AZURE_RESOURCE_GROUP)"
                   package: "$(Pipeline.Workspace)/app-package/app.zip"
-                  startUpCommand: "uvicorn test_user_service:app --host 0.0.0.0 --port 8000"
+                  startUpCommand: "uvicorn user_service:app --host 0.0.0.0 --port 8000"
                   deploymentMethod: "zipDeploy"   # fastest; avoids remote Oryx build
 
               # 3. (Optional) Smoke-test the live endpoint after deployment.
