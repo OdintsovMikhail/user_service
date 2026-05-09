@@ -3,8 +3,8 @@
 #
 # Stage 1 – Static Analysis  : flake8 syntax / style check
 # Stage 2 – Tests            : pytest, results published as JUnit + artifacts
-# Stage 3 – Build            : package app as zip artifact
-# Stage 4 – Deploy           : deploy to Azure Web App via service connection
+# Stage 3 – Build            : install deps, zip artifact, publish
+# Stage 4 – Deploy           : deploy zip to Azure Web App
 # ──────────────────────────────────────────────────────────────────────────────
 
 trigger:
@@ -25,16 +25,10 @@ pool:
 variables:
   PYTHON_VERSION: "3.12"
   PIP_CACHE_DIR: $(Pipeline.Workspace)/.pip
-  # ── Azure Web App settings ──────────────────────────────────────────────────
-  # Replace these values with your own, or override them in the pipeline UI
-  # under Variables (padlock icon) so secrets stay out of source control.
-  AZURE_SERVICE_CONNECTION: "757c042d-1e11-4044-9f77-780de6d8a542" 
-  AZURE_WEBAPP_NAME: "BC-user-service"                         
-  AZURE_RESOURCE_GROUP: "VisualStudioOnline-22B2052D60CF4FCCBBCA616BDF0708FF"                  
-  # Set to 'true' only for the branch that should actually deploy (e.g. main).
-  # PR builds will still run stages 1-3 but skip stage 4.
-  DEPLOY_ENABLED: $[eq(variables['Build.SourceBranch'], 'refs/heads/main')]
-
+  # ── Update these two variables to match your environment ──────────────────
+  AZURE_SERVICE_CONNECTION: "757c042d-1e11-4044-9f77-780de6d8a542"   # Azure DevOps service connection
+  WEBAPP_NAME: "BC-user-service"                           # Azure Web App resource name
+  # ──────────────────────────────────────────────────────────────────────────
 
 stages:
 
@@ -49,14 +43,12 @@ stages:
 
       steps:
 
-        # 1. Pin Python version
         - task: UsePythonVersion@0
           displayName: "Use Python $(PYTHON_VERSION)"
           inputs:
             versionSpec: "$(PYTHON_VERSION)"
             addToPath: true
 
-        # 2. Cache pip downloads between runs
         - task: Cache@2
           displayName: "Cache pip packages"
           inputs:
@@ -65,17 +57,11 @@ stages:
               pip | "$(Agent.OS)"
             path: $(PIP_CACHE_DIR)
 
-        # 3. Install only flake8 (keep this stage lean and fast)
         - script: |
             python -m pip install --upgrade pip
             pip install flake8
           displayName: "Install flake8"
 
-        # 4. Run flake8
-        #    --max-line-length 120  – matches most modern Python style guides
-        #    --statistics           – summary counts per error code
-        #    --count                – total error count at the end
-        #    Output is written to flake8-report.txt so it can be uploaded
         - script: |
             flake8 . \
               --exclude=.venv,__pycache__,.git \
@@ -86,10 +72,6 @@ stages:
               | tee flake8-report.txt
           displayName: "Run flake8"
 
-        # 5. Publish the lint report as a pipeline artifact
-        #    PublishPipelineArtifact@1 is used instead of PublishBuildArtifacts@1
-        #    to avoid the "Value cannot be null / securityNamespace" error that
-        #    the older task can throw on some Azure DevOps organisations.
         - task: PublishPipelineArtifact@1
           displayName: "Publish flake8 report"
           condition: always()
@@ -113,14 +95,12 @@ stages:
 
       steps:
 
-        # 1. Pin Python version
         - task: UsePythonVersion@0
           displayName: "Use Python $(PYTHON_VERSION)"
           inputs:
             versionSpec: "$(PYTHON_VERSION)"
             addToPath: true
 
-        # 2. Cache pip downloads
         - task: Cache@2
           displayName: "Cache pip packages"
           inputs:
@@ -129,18 +109,12 @@ stages:
               pip | "$(Agent.OS)"
             path: $(PIP_CACHE_DIR)
 
-        # 3. Install runtime + test dependencies
-        #    pydantic[email] is required because schemas.py uses EmailStr
         - script: |
             python -m pip install --upgrade pip
             pip install -r requirements.txt
-            pip install pytest pytest-cov "pydantic[email]" httpx
+            pip install pytest pytest-cov "pydantic[email]"
           displayName: "Install dependencies"
 
-        # 4. Run pytest
-        #    --junitxml  – machine-readable results (picked up by PublishTestResults)
-        #    --cov       – coverage report in XML (Cobertura) + terminal summary
-        #    -v          – verbose output so failures are easy to read in logs
         - script: |
             mkdir -p test-results
             pytest test_user_service.py \
@@ -151,7 +125,6 @@ stages:
               --cov-report=term-missing
           displayName: "Run pytest"
 
-        # 5. Publish JUnit test results (shows pass/fail in the Azure Pipelines UI)
         - task: PublishTestResults@2
           displayName: "Publish test results"
           condition: always()
@@ -161,16 +134,12 @@ stages:
             failTaskOnFailedTests: true
             testRunTitle: "pytest – user_service"
 
-        # 6. Publish code coverage (Cobertura XML → Coverage tab in the UI)
         - task: PublishCodeCoverageResults@2
           displayName: "Publish code coverage"
           condition: always()
           inputs:
             summaryFileLocation: "test-results/coverage.xml"
 
-        # 7. Upload the entire test-results folder as a pipeline artifact
-        #    Same fix as Stage 1 – use PublishPipelineArtifact@1 instead of
-        #    PublishBuildArtifacts@1 to avoid the securityNamespace null error.
         - task: PublishPipelineArtifact@1
           displayName: "Publish test artifacts"
           condition: always()
@@ -182,62 +151,34 @@ stages:
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  STAGE 3 – Build                                                        ║
-# ║                                                                         ║
-# ║  Installs dependencies into a local .python_packages folder (the        ║
-# ║  Oryx/Kudu build system on Azure App Service expects packages there     ║
-# ║  when SCM_DO_BUILD_DURING_DEPLOYMENT is disabled), then zips the whole  ║
-# ║  workspace into app.zip and publishes it as a pipeline artifact.        ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 - stage: Build
-  displayName: "Stage 3 – Build (package app)"
+  displayName: "Stage 3 – Build"
   dependsOn: Tests
   condition: succeeded()
 
   jobs:
-    - job: BuildApp
-      displayName: "Build & package Python app"
+    - job: Build
+      displayName: "Install deps & zip application"
 
       steps:
 
-        # 1. Pin Python version (must match the runtime on the Web App)
+        # 1. Pin Python version
         - task: UsePythonVersion@0
           displayName: "Use Python $(PYTHON_VERSION)"
           inputs:
             versionSpec: "$(PYTHON_VERSION)"
             addToPath: true
 
-        # 2. Cache pip downloads
-        - task: Cache@2
-          displayName: "Cache pip packages"
-          inputs:
-            key: 'pip | "$(Agent.OS)" | requirements.txt'
-            restoreKeys: |
-              pip | "$(Agent.OS)"
-            path: $(PIP_CACHE_DIR)
-
-        # 3. Install production dependencies into .python_packages/lib/site-packages
-        #    This layout is understood by Azure App Service without a remote build.
-        #    If you prefer the Oryx remote build, remove --target and set
-        #    SCM_DO_BUILD_DURING_DEPLOYMENT=true in the Web App's app settings.
+        # 2. Install dependencies into .python_packages so they are bundled
+        #    inside the zip. Azure App Service resolves packages from this path.
         - script: |
             python -m pip install --upgrade pip
-            pip install \
-              --requirement requirements.txt \
+            pip install -r requirements.txt \
               --target=".python_packages/lib/site-packages"
-          displayName: "Install production dependencies"
+          displayName: "Install dependencies"
 
-        # 4. Write a startup command file so Azure knows how to start the app.
-        #    Adjust the module:app reference to match your entry point.
-        #    Common examples:
-        #      FastAPI  → gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app
-        #      Flask    → gunicorn -w 4 main:app
-        #      Django   → gunicorn -w 4 user_service.wsgi
-        - script: |
-            echo "uvicorn user_service:app --host 0.0.0.0 --port 8000" > startup.txt
-          displayName: "Write startup command"
-
-        # 5. Zip the workspace (source + pre-installed packages).
-        #    Exclusions keep the archive small and free of CI artefacts.
+        # 3. Zip source + installed packages, excluding test/CI clutter
         - task: ArchiveFiles@2
           displayName: "Zip application"
           inputs:
@@ -246,96 +187,55 @@ stages:
             archiveType: "zip"
             archiveFile: "$(Build.ArtifactStagingDirectory)/app.zip"
             replaceExistingArchive: true
-            # Exclude test files, CI config, virtual envs, and build artefacts
-            # that have no place in a production package.
-            exclude: |
-              **/.git/**
-              **/__pycache__/**
-              **/*.pyc
-              **/*.pyo
-              .venv/**
-              test-results/**
+            excludePaths: |
+              .venv
+              __pycache__
+              .git
+              test-results
               flake8-report.txt
               test_*.py
-              **/tests/**
 
-        # 6. Publish the zip so the Deploy stage can download it.
-        #    Using a named artifact makes it easy to download in Stage 4
-        #    even when stages run on different agents.
+        # 4. Publish the zip so the Deploy stage can download it.
+        #    Also useful for manual re-deploys without re-running the pipeline.
         - task: PublishPipelineArtifact@1
-          displayName: "Publish app artifact"
+          displayName: "Publish app zip artifact"
           inputs:
             targetPath: "$(Build.ArtifactStagingDirectory)/app.zip"
-            artifact: "app-package"
+            artifact: "app-zip"
             publishLocation: "pipeline"
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
-# ║  STAGE 4 – Deploy to Azure Web App                                      ║
-# ║                                                                         ║
-# ║  Downloads the zip built in Stage 3 and pushes it to Azure App Service  ║
-# ║  using the AzureWebApp@1 task authenticated via a service connection.   ║
-# ║                                                                         ║
-# ║  Pre-requisites (one-time setup in Azure DevOps):                       ║
-# ║    1. Project Settings → Service connections → New → Azure Resource     ║
-# ║       Manager → Service principal (automatic).                          ║
-# ║    2. Copy the connection name into the AZURE_SERVICE_CONNECTION        ║
-# ║       variable at the top of this file (or set it as a pipeline var).   ║
-# ║    3. Grant the service principal "Contributor" on the target App        ║
-# ║       Service (or at minimum the "Website Contributor" role).           ║
+# ║  STAGE 4 – Deploy (Azure Web App)                                       ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 - stage: Deploy
-  displayName: "Stage 4 – Deploy to Azure Web App"
+  displayName: "Stage 4 – Deploy (Azure Web App)"
   dependsOn: Build
-  # Only deploy when Build succeeded AND we are on the main branch.
-  # PR pipelines run stages 1-3 for validation but never touch production.
-  condition: and(succeeded(), eq(variables['DEPLOY_ENABLED'], 'true'))
+  # Only deploy from main; remove this condition to deploy from all branches
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
 
   jobs:
-    - deployment: DeployWebApp
-      displayName: "Deploy to Azure App Service"
-      # Deployment jobs support approval gates and deployment history in the UI.
-      # Add pre/post approval checks under Environments in Azure Pipelines.
-      environment: "dev"
-      strategy:
-        runOnce:
-          deploy:
-            steps:
+    - job: Deploy
+      displayName: "Deploy zip to Azure Web App"
 
-              # 1. Download the zip artifact produced by Stage 3.
-              #    The 'artifact' name must match exactly what was published above.
-              - task: DownloadPipelineArtifact@2
-                displayName: "Download app artifact"
-                inputs:
-                  artifact: "app-package"
-                  path: "$(Pipeline.Workspace)/app-package"
+      steps:
 
-              # 2. Deploy to Azure Web App.
-              #    AzureWebApp@1 handles the Kudu ZIP deploy API call,
-              #    retries, and slot-awareness automatically.
-              - task: AzureWebApp@1
-                displayName: "Deploy to Azure Web App"
-                inputs:
-                  azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
-                  appType: "webAppLinux"          # use "webApp" for Windows plans
-                  appName: "$(AZURE_WEBAPP_NAME)"
-                  resourceGroupName: "$(AZURE_RESOURCE_GROUP)"
-                  package: "$(Pipeline.Workspace)/app-package/app.zip"
-                  startUpCommand: "uvicorn user_service:app --host 0.0.0.0 --port 8000"
-                  deploymentMethod: "zipDeploy"   # fastest; avoids remote Oryx build
+        # 1. Download the zip artifact produced by the Build stage
+        - task: DownloadPipelineArtifact@2
+          displayName: "Download app zip artifact"
+          inputs:
+            artifact: "app-zip"
+            targetPath: "$(Pipeline.Workspace)/app-zip"
 
-              # 3. (Optional) Smoke-test the live endpoint after deployment.
-              #    Replace the URL with your app's actual health-check endpoint.
-              #    The step is set to continue on error so a flaky health check
-              #    doesn't roll back a successful deploy; tune as needed.
-              - script: |
-                  echo "Running post-deploy smoke test..."
-                  STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-                    "https://$(AZURE_WEBAPP_NAME).azurewebsites.net/health")
-                  echo "Health endpoint returned HTTP $STATUS"
-                  if [ "$STATUS" != "200" ]; then
-                    echo "##vso[task.logissue type=warning]Health check returned $STATUS – verify the deployment."
-                    exit 1
-                  fi
-                displayName: "Smoke test – health endpoint"
-                continueOnError: true
+        # 2. Deploy to Azure Web App via the service connection.
+        #    The task handles authentication; no credentials appear in the YAML.
+        - task: AzureWebApp@1
+          displayName: "Deploy to Azure Web App"
+          inputs:
+            azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+            appType: "webAppLinux"
+            appName: "$(WEBAPP_NAME)"
+            package: "$(Pipeline.Workspace)/app-zip/app.zip"
+            runtimeStack: "PYTHON|3.12"
+            # startUpCommand is optional – uncomment and set for custom entrypoints, e.g.:
+            # startUpCommand: "gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app"
