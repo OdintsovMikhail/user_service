@@ -153,78 +153,40 @@ stages:
 # ║  STAGE 3 – Build                                                        ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 - stage: Build
-  displayName: "Stage 3 – Build"
-  dependsOn: Tests
-  condition: succeeded()
-
-  jobs:
-    - job: Build
-      displayName: "Install deps & zip application"
-
-      steps:
-
-        # 1. Pin Python version
-        - task: UsePythonVersion@0
-          displayName: "Use Python $(PYTHON_VERSION)"
-          inputs:
-            versionSpec: "$(PYTHON_VERSION)"
-            addToPath: true
-
-        # 2. Install dependencies into .python_packages so they are bundled
-        #    inside the zip. Azure App Service resolves packages from this path.
-        - script: |
-            python -m pip install --upgrade pip
-            pip install -r requirements.txt
-          displayName: "Install dependencies"
-
-        # 3. Zip source + installed packages, excluding test/CI clutter
-        - task: ArchiveFiles@2
-          displayName: "Zip application"
-          inputs:
-            rootFolderOrFile: "$(System.DefaultWorkingDirectory)"
-            includeRootFolder: false
-            archiveType: "zip"
-            archiveFile: "$(Build.ArtifactStagingDirectory)/app.zip"
-            replaceExistingArchive: true
-            excludePaths: |
-              .venv
-              __pycache__
-              .git
-              test-results
-              flake8-report.txt
-              test_*.py
-
-        # 4. Publish the zip so the Deploy stage can download it.
-        #    Also useful for manual re-deploys without re-running the pipeline.
-        - task: PublishPipelineArtifact@1
-          displayName: "Publish app zip artifact"
-          inputs:
-            targetPath: "$(Build.ArtifactStagingDirectory)/app.zip"
-            artifact: "app-zip"
-            publishLocation: "pipeline"
+    displayName: 'Build Python App'
+    dependsOn: Test
+    jobs:
+      - job: Build
+        steps:
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.x'
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt
+            displayName: 'Install dependencies'
+          - script: |
+              zip -r app.zip . -x "*.git*" "*__pycache__*"
+            displayName: 'Archive app'
+          - publish: app.zip
+            artifact: drop
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║  STAGE 4 – Deploy (Azure Web App)                                       ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 - stage: Deploy
-  displayName: "Stage 4 – Deploy (Azure Web App)"
+  displayName: 'Deploy to Azure Web App'
   dependsOn: Build
-  # Only deploy from main; remove this condition to deploy from all branches
-  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
-
   jobs:
-    - job: Deploy
-      displayName: "Deploy zip to Azure Web App"
-
-      steps:
-
-        # 1. Download the zip artifact produced by the Build stage
-        - task: DownloadPipelineArtifact@2
-          displayName: "Download app zip artifact"
-          inputs:
-            artifact: "app-zip"
-            targetPath: "$(Pipeline.Workspace)/app-zip"
+    - deployment: DeployWebApp
+      environment: 'dev'
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - download: current
+                artifact: drop
 
         # 2. Deploy to Azure Web App via the service connection.
         #    The task handles authentication; no credentials appear in the YAML.
