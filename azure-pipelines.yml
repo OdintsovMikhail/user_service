@@ -190,13 +190,11 @@ stages:
 
         # 2. Deploy to Azure Web App via the service connection.
         #    The task handles authentication; no credentials appear in the YAML.
-        - task: AzureWebApp@1
-          displayName: "Deploy to Azure Web App"
-          inputs:
-            azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
-            appType: "webAppLinux"
-            appName: "$(WEBAPP_NAME)"
-            package: "$(Pipeline.Workspace)/app-zip/app.zip"
-            runtimeStack: "PYTHON|3.12"
-            # startUpCommand is optional – uncomment and set for custom entrypoints, e.g.:
-            # startUpCommand: "gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app"
+    - task: AzureWebApp@1
+      displayName: "Deploy to Azure Web App"
+      inputs:
+        azureSubscription: "$(AZURE_SERVICE_CONNECTION)"
+        appType: "webAppLinux"
+        appName: "$(WEBAPP_NAME)"
+        package: "$(Pipeline.Workspace)/app-zip/app.zip"
+        runtimeStack: "PYTHON|3.12"
