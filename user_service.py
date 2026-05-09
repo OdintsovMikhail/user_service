@@ -15,6 +15,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 S = DB_SCHEMA
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 # ── POST /user/register ───────────────────────────────────────────────────────
 
 @app.post("/user/register", response_model=UserOut, status_code=201)
