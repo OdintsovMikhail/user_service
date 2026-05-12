@@ -77,17 +77,9 @@ GQL_USER_BY_USERNAME = """
 @pytest.fixture()
 def client():
     with patch("utility.get_connection") as mock_conn:
-        import importlib
-        import resolvers
-        import schema
         import user_service as us
-
-        importlib.reload(resolvers)
-        importlib.reload(schema)
-        importlib.reload(us)
-
         tc = TestClient(us.app, raise_server_exceptions=False)
-        tc._mock_conn = mock_conn   # single mock for both REST and GraphQL
+        tc._mock_conn = mock_conn
         yield tc
 
 
