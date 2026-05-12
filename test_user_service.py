@@ -76,7 +76,8 @@ GQL_USER_BY_USERNAME = """
 
 @pytest.fixture()
 def client():
-    with patch("utility.get_connection") as mock_conn:
+    with patch("user_service.get_connection") as mock_rest, \
+         patch("resolvers.get_connection") as mock_gql:
         import user_service as us
         tc = TestClient(us.app, raise_server_exceptions=False)
         tc._mock_conn = mock_conn
