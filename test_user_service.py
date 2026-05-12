@@ -84,6 +84,11 @@ def client():
         import resolvers
         import schema
         import user_service as us
+
+        importlib.reload(resolvers)
+        importlib.reload(schema)
+        importlib.reload(us)
+
         tc = TestClient(us.app, raise_server_exceptions=False)
         tc._mock_rest_conn = mock_rest
         tc._mock_gql_conn = mock_gql

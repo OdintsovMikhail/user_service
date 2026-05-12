@@ -1,14 +1,15 @@
-import utility                          # ← import module, not function
+from utility import get_connection, DB_SCHEMA
 from gql_types import User
 import logging
 
 logger = logging.getLogger("user_service")
+S = DB_SCHEMA
 
 
 def resolve_user_by_id(id: int) -> User:
-    with utility.get_connection() as conn:      # ← call via module
+    with get_connection() as conn:
         row = conn.cursor().execute(
-            f"SELECT Id, Username, Email FROM [{utility.DB_SCHEMA}].[User] WHERE Id = ?", id
+            f"SELECT Id, Username, Email FROM [{S}].[User] WHERE Id = ?", id
         ).fetchone()
 
     if not row:
@@ -19,9 +20,9 @@ def resolve_user_by_id(id: int) -> User:
 
 
 def resolve_user_by_username(username: str) -> User:
-    with utility.get_connection() as conn:      # ← call via module
+    with get_connection() as conn:
         row = conn.cursor().execute(
-            f"SELECT Id, Username, Email FROM [{utility.DB_SCHEMA}].[User] WHERE Username = ?", username
+            f"SELECT Id, Username, Email FROM [{S}].[User] WHERE Username = ?", username
         ).fetchone()
 
     if not row:
