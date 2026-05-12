@@ -1,6 +1,8 @@
 from fastapi import FastAPI, HTTPException
+from strawberry.fastapi import GraphQLRouter
 from utility import get_connection, DB_SCHEMA
 from schemas import UserRegister, UserLogin, UserOut
+from schema import schema
 import logging
 
 app = FastAPI(
@@ -14,6 +16,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 S = DB_SCHEMA
 
+app.include_router(GraphQLRouter(schema), prefix="/graphql")
 
 # ── POST /user/register ───────────────────────────────────────────────────────
 
@@ -67,43 +70,3 @@ def login(payload: UserLogin):
     return {"message": "Login successful", "user": UserOut(id=row[0], username=row[1], email=row[2])}
 
 
-# ── GET /user/{username} ──────────────────────────────────────────────────────
-
-@app.get("/user/{username}", response_model=UserOut)
-def get_user_by_username(username: str):
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            f"SELECT Id, Username, Email FROM [{S}].[User] WHERE Username = ?",
-            username
-        )
-        row = cursor.fetchone()
-
-    if not row:
-        exc = HTTPException(status_code=404, detail="User not found")
-        logger.error("Failed: %s", exc)
-        raise exc
-
-    logger.info("User with username %s found id=%s", username, row[0])
-    return UserOut(id=row[0], username=row[1], email=row[2])
-
-
-# ── GET /user/id/{id} ─────────────────────────────────────────────────────────
-
-@app.get("/user/id/{id}", response_model=UserOut)
-def get_user_by_id(id: int):
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            f"SELECT Id, Username, Email FROM [{S}].[User] WHERE Id = ?",
-            id
-        )
-        row = cursor.fetchone()
-
-    if not row:
-        exc = HTTPException(status_code=404, detail="User not found")
-        logger.error("Failed: %s", exc)
-        raise exc
-
-    logger.info("User with id %s found", id)
-    return UserOut(id=row[0], username=row[1], email=row[2])

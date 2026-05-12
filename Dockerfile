@@ -22,7 +22,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Copy application files ────────────────────────────────────────────────────
-COPY utility.py schemas.py user_service.py ./
+COPY utility.py schemas.py user_service.py gql_types.py resolvers.py schema.py
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 EXPOSE 8000

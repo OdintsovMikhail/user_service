@@ -1,12 +1,12 @@
 """
 Tests for user_service.py
 
-Strategy: mock `user_service.get_connection` so no real SQL Server is needed.
-We also stub `pyodbc` in sys.modules before the app imports it so the native
-ODBC driver library is not required on the test machine.
+Strategy: mock `get_connection` in both `user_service` and `resolvers` so no
+real SQL Server is needed. We also stub `pyodbc` and `dotenv` in sys.modules
+before the app imports them so native drivers are not required on the test machine.
 
 Run with (from the project root):
-    pip install fastapi httpx pytest email-validator
+    pip install fastapi httpx pytest email-validator strawberry-graphql[fastapi]
     pytest test_user_service.py -v
 """
 
@@ -16,19 +16,20 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # ---------------------------------------------------------------------------
-# Stub pyodbc so the native libodbc.so is not required on the test machine
+# Stub pyodbc so the native ODBC driver is not required on the test machine
 # ---------------------------------------------------------------------------
 _pyodbc_stub = types.ModuleType("pyodbc")
 _pyodbc_stub.connect = MagicMock()
 _pyodbc_stub.Connection = MagicMock
 sys.modules.setdefault("pyodbc", _pyodbc_stub)
 
-# Also stub python-dotenv's load_dotenv so no .env file is required
+# Stub python-dotenv so no .env file is required
 _dotenv_stub = types.ModuleType("dotenv")
 _dotenv_stub.load_dotenv = lambda *a, **kw: None
 sys.modules.setdefault("dotenv", _dotenv_stub)
 
 from fastapi.testclient import TestClient  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -48,16 +49,39 @@ def _make_conn(cursor):
     return conn
 
 
+GQL_USER_BY_ID = """
+    query GetUserById($id: Int!) {
+        userById(id: $id) {
+            id
+            username
+            email
+        }
+    }
+"""
+
+GQL_USER_BY_USERNAME = """
+    query GetUserByUsername($username: String!) {
+        userByUsername(username: $username) {
+            id
+            username
+            email
+        }
+    }
+"""
+
+
 # ---------------------------------------------------------------------------
-# Fixture: a fresh TestClient with get_connection patched
+# Fixture: a fresh TestClient with get_connection patched in both modules
 # ---------------------------------------------------------------------------
 
 @pytest.fixture()
 def client():
-    with patch("user_service.get_connection") as mock_get_conn:
+    with patch("user_service.get_connection") as mock_rest, \
+         patch("resolvers.get_connection") as mock_gql:
         import user_service as us
         tc = TestClient(us.app, raise_server_exceptions=False)
-        tc._mock_get_conn = mock_get_conn
+        tc._mock_rest_conn = mock_rest
+        tc._mock_gql_conn = mock_gql
         yield tc
 
 
@@ -73,7 +97,7 @@ class TestRegister:
             None,                                       # no duplicate found
             (42, "alice", "alice@example.com"),         # INSERT OUTPUT row
         ]
-        client._mock_get_conn.return_value = _make_conn(cursor)
+        client._mock_rest_conn.return_value = _make_conn(cursor)
 
         resp = client.post("/user/register", json={
             "username": "alice",
@@ -88,8 +112,8 @@ class TestRegister:
         assert data["email"] == "alice@example.com"
 
     def test_register_duplicate_returns_409(self, client):
-        cursor = _make_cursor(fetchone_return=(1,))   # existing user found
-        client._mock_get_conn.return_value = _make_conn(cursor)
+        cursor = _make_cursor(fetchone_return=(1,))     # existing user found
+        client._mock_rest_conn.return_value = _make_conn(cursor)
 
         resp = client.post("/user/register", json={
             "username": "alice",
@@ -119,7 +143,7 @@ class TestRegister:
             (1, "charlie", "c@example.com"),
         ]
         conn = _make_conn(cursor)
-        client._mock_get_conn.return_value = conn
+        client._mock_rest_conn.return_value = conn
 
         client.post("/user/register", json={
             "username": "charlie",
@@ -135,7 +159,7 @@ class TestRegister:
             None,
             (99, "dave", "dave@example.com"),
         ]
-        client._mock_get_conn.return_value = _make_conn(cursor)
+        client._mock_rest_conn.return_value = _make_conn(cursor)
 
         client.post("/user/register", json={
             "username": "dave",
@@ -156,7 +180,7 @@ class TestLogin:
 
     def test_login_success(self, client):
         cursor = _make_cursor(fetchone_return=(7, "bob", "bob@example.com"))
-        client._mock_get_conn.return_value = _make_conn(cursor)
+        client._mock_rest_conn.return_value = _make_conn(cursor)
 
         resp = client.post("/user/login", json={
             "username": "bob",
@@ -172,7 +196,7 @@ class TestLogin:
 
     def test_login_wrong_credentials_returns_401(self, client):
         cursor = _make_cursor(fetchone_return=None)
-        client._mock_get_conn.return_value = _make_conn(cursor)
+        client._mock_rest_conn.return_value = _make_conn(cursor)
 
         resp = client.post("/user/login", json={
             "username": "bob",
@@ -192,7 +216,7 @@ class TestLogin:
 
     def test_login_queries_username_and_password(self, client):
         cursor = _make_cursor(fetchone_return=(1, "u", "u@e.com"))
-        client._mock_get_conn.return_value = _make_conn(cursor)
+        client._mock_rest_conn.return_value = _make_conn(cursor)
 
         client.post("/user/login", json={"username": "u", "password": "p"})
 
@@ -202,78 +226,120 @@ class TestLogin:
 
 
 # ---------------------------------------------------------------------------
-# GET /user/{username}
+# GraphQL — userByUsername
 # ---------------------------------------------------------------------------
 
-class TestGetUserByUsername:
+class TestGqlUserByUsername:
 
     def test_get_existing_user(self, client):
         cursor = _make_cursor(fetchone_return=(3, "carol", "carol@example.com"))
-        client._mock_get_conn.return_value = _make_conn(cursor)
+        client._mock_gql_conn.return_value = _make_conn(cursor)
 
-        resp = client.get("/user/carol")
+        resp = client.post("/graphql", json={
+            "query": GQL_USER_BY_USERNAME,
+            "variables": {"username": "carol"},
+        })
 
         assert resp.status_code == 200
-        data = resp.json()
+        data = resp.json()["data"]["userByUsername"]
         assert data["id"] == 3
         assert data["username"] == "carol"
         assert data["email"] == "carol@example.com"
 
-    def test_get_nonexistent_user_returns_404(self, client):
+    def test_get_nonexistent_user_returns_error(self, client):
         cursor = _make_cursor(fetchone_return=None)
-        client._mock_get_conn.return_value = _make_conn(cursor)
+        client._mock_gql_conn.return_value = _make_conn(cursor)
 
-        resp = client.get("/user/nobody")
+        resp = client.post("/graphql", json={
+            "query": GQL_USER_BY_USERNAME,
+            "variables": {"username": "nobody"},
+        })
 
-        assert resp.status_code == 404
-        assert "not found" in resp.json()["detail"].lower()
+        assert resp.status_code == 200                  # GraphQL always 200
+        errors = resp.json()["errors"]
+        assert any("not found" in e["message"].lower() for e in errors)
 
-    def test_get_user_passes_username_as_query_param(self, client):
+    def test_get_user_passes_username_to_query(self, client):
         cursor = _make_cursor(fetchone_return=(1, "dave", "d@e.com"))
-        client._mock_get_conn.return_value = _make_conn(cursor)
+        client._mock_gql_conn.return_value = _make_conn(cursor)
 
-        client.get("/user/dave")
+        client.post("/graphql", json={
+            "query": GQL_USER_BY_USERNAME,
+            "variables": {"username": "dave"},
+        })
 
         args = cursor.execute.call_args[0]
         assert "dave" in args
 
+    def test_partial_fields_returned(self, client):
+        cursor = _make_cursor(fetchone_return=(3, "carol", "carol@example.com"))
+        client._mock_gql_conn.return_value = _make_conn(cursor)
+
+        resp = client.post("/graphql", json={
+            "query": "{ userByUsername(username: \"carol\") { email } }",
+        })
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]["userByUsername"]
+        assert "email" in data
+        assert "username" not in data         # only requested field returned
+
 
 # ---------------------------------------------------------------------------
-# GET /user/id/{id}
+# GraphQL — userById
 # ---------------------------------------------------------------------------
 
-class TestGetUserById:
+class TestGqlUserById:
 
     def test_get_existing_user_by_id(self, client):
         cursor = _make_cursor(fetchone_return=(5, "eve", "eve@example.com"))
-        client._mock_get_conn.return_value = _make_conn(cursor)
+        client._mock_gql_conn.return_value = _make_conn(cursor)
 
-        resp = client.get("/user/id/5")
+        resp = client.post("/graphql", json={
+            "query": GQL_USER_BY_ID,
+            "variables": {"id": 5},
+        })
 
         assert resp.status_code == 200
-        data = resp.json()
+        data = resp.json()["data"]["userById"]
         assert data["id"] == 5
         assert data["username"] == "eve"
         assert data["email"] == "eve@example.com"
 
-    def test_get_nonexistent_user_by_id_returns_404(self, client):
+    def test_get_nonexistent_user_returns_error(self, client):
         cursor = _make_cursor(fetchone_return=None)
-        client._mock_get_conn.return_value = _make_conn(cursor)
+        client._mock_gql_conn.return_value = _make_conn(cursor)
 
-        resp = client.get("/user/id/999")
+        resp = client.post("/graphql", json={
+            "query": GQL_USER_BY_ID,
+            "variables": {"id": 999},
+        })
 
-        assert resp.status_code == 404
-        assert "not found" in resp.json()["detail"].lower()
+        assert resp.status_code == 200                  # GraphQL always 200
+        errors = resp.json()["errors"]
+        assert any("not found" in e["message"].lower() for e in errors)
 
-    def test_get_user_by_non_integer_id_returns_422(self, client):
-        resp = client.get("/user/id/abc")
-        assert resp.status_code == 422
-
-    def test_get_user_passes_id_as_query_param(self, client):
+    def test_get_user_passes_id_to_query(self, client):
         cursor = _make_cursor(fetchone_return=(10, "frank", "f@e.com"))
-        client._mock_get_conn.return_value = _make_conn(cursor)
+        client._mock_gql_conn.return_value = _make_conn(cursor)
 
-        client.get("/user/id/10")
+        client.post("/graphql", json={
+            "query": GQL_USER_BY_ID,
+            "variables": {"id": 10},
+        })
 
         args = cursor.execute.call_args[0]
         assert 10 in args
+
+    def test_partial_fields_returned(self, client):
+        cursor = _make_cursor(fetchone_return=(5, "eve", "eve@example.com"))
+        client._mock_gql_conn.return_value = _make_conn(cursor)
+
+        resp = client.post("/graphql", json={
+            "query": "{ userById(id: 5) { username } }",
+        })
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]["userById"]
+        assert "username" in data
+        assert "email" not in data            # only requested field returned

@@ -25,10 +25,8 @@ pool:
 variables:
   PYTHON_VERSION: "3.12"
   PIP_CACHE_DIR: $(Pipeline.Workspace)/.pip
-  # ── Update these two variables to match your environment ──────────────────
-  AZURE_SERVICE_CONNECTION: "757c042d-1e11-4044-9f77-780de6d8a542"   # Azure DevOps service connection
-  WEBAPP_NAME: "BC-user-service"                           # Azure Web App resource name
-  # ──────────────────────────────────────────────────────────────────────────
+  AZURE_SERVICE_CONNECTION: "757c042d-1e11-4044-9f77-780de6d8a542" 
+  WEBAPP_NAME: "BC-user-service" 
 
 stages:
 

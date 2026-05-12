@@ -4,3 +4,4 @@ pyodbc
 python-dotenv
 pydantic[email]
 pytest
+strawberry-graphql[fastapi]
