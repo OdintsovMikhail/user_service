@@ -78,7 +78,17 @@ GQL_USER_BY_USERNAME = """
 def client():
     with patch("user_service.get_connection") as mock_rest, \
          patch("resolvers.get_connection") as mock_gql:
+
+        # Force reload so patches are picked up by already-imported modules
+        import importlib
+        import resolvers
+        import schema
         import user_service as us
+
+        importlib.reload(resolvers)
+        importlib.reload(schema)
+        importlib.reload(us)
+
         tc = TestClient(us.app, raise_server_exceptions=False)
         tc._mock_rest_conn = mock_rest
         tc._mock_gql_conn = mock_gql
