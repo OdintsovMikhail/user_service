@@ -76,12 +76,10 @@ GQL_USER_BY_USERNAME = """
 
 @pytest.fixture()
 def client():
-    with patch("user_service.get_connection") as mock_rest, \
-         patch("resolvers.get_connection") as mock_gql:
+    with patch("utility.get_connection") as mock_conn:
         import user_service as us
         tc = TestClient(us.app, raise_server_exceptions=False)
-        tc._mock_rest_conn = mock_rest
-        tc._mock_gql_conn = mock_gql
+        tc._mock_conn = mock_conn
         yield tc
 
 
@@ -97,7 +95,7 @@ class TestRegister:
             None,                                       # no duplicate found
             (42, "alice", "alice@example.com"),         # INSERT OUTPUT row
         ]
-        client._mock_rest_conn.return_value = _make_conn(cursor)
+        client._mock_conn.return_value = _make_conn(cursor)
 
         resp = client.post("/user/register", json={
             "username": "alice",
@@ -113,7 +111,7 @@ class TestRegister:
 
     def test_register_duplicate_returns_409(self, client):
         cursor = _make_cursor(fetchone_return=(1,))     # existing user found
-        client._mock_rest_conn.return_value = _make_conn(cursor)
+        client._mock_conn.return_value = _make_conn(cursor)
 
         resp = client.post("/user/register", json={
             "username": "alice",
@@ -143,7 +141,7 @@ class TestRegister:
             (1, "charlie", "c@example.com"),
         ]
         conn = _make_conn(cursor)
-        client._mock_rest_conn.return_value = conn
+        client._mock_conn = conn
 
         client.post("/user/register", json={
             "username": "charlie",
@@ -159,7 +157,7 @@ class TestRegister:
             None,
             (99, "dave", "dave@example.com"),
         ]
-        client._mock_rest_conn.return_value = _make_conn(cursor)
+        client._mock_conn .return_value = _make_conn(cursor)
 
         client.post("/user/register", json={
             "username": "dave",
@@ -180,7 +178,7 @@ class TestLogin:
 
     def test_login_success(self, client):
         cursor = _make_cursor(fetchone_return=(7, "bob", "bob@example.com"))
-        client._mock_rest_conn.return_value = _make_conn(cursor)
+        client._mock_conn.return_value = _make_conn(cursor)
 
         resp = client.post("/user/login", json={
             "username": "bob",
@@ -196,7 +194,7 @@ class TestLogin:
 
     def test_login_wrong_credentials_returns_401(self, client):
         cursor = _make_cursor(fetchone_return=None)
-        client._mock_rest_conn.return_value = _make_conn(cursor)
+        client._mock_conn.return_value = _make_conn(cursor)
 
         resp = client.post("/user/login", json={
             "username": "bob",
@@ -216,7 +214,7 @@ class TestLogin:
 
     def test_login_queries_username_and_password(self, client):
         cursor = _make_cursor(fetchone_return=(1, "u", "u@e.com"))
-        client._mock_rest_conn.return_value = _make_conn(cursor)
+        client._mock_conn.return_value = _make_conn(cursor)
 
         client.post("/user/login", json={"username": "u", "password": "p"})
 
